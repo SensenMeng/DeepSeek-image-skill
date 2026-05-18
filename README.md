@@ -33,7 +33,7 @@ opencli deepseek status
 
 ## 快速使用流程
 
-会话名建议固定为 `deepseek-qa`（与 `SKILL.md` 约定一致），这样在连续执行 bind / upload / state / type / click / read 时不会混淆会话上下文。
+会话名建议固定为 `deepseek-qa`（与 `SKILL.md` 约定一致），避免把 `bind/upload/state/type/click/read` 分散到不同 session，导致命令打到错误页面或拿到错误 ref。
 
 1. 新建会话并绑定 `deepseek-qa`
 2. 刷新页面并切到识图模式
@@ -53,7 +53,7 @@ opencli browser deepseek-qa eval "location.reload()"
 sleep 3 && opencli browser deepseek-qa bind
 opencli browser deepseek-qa eval "document.querySelectorAll('[role=radio]')[2].click()"
 
-# 3) 上传图片（注意：upload 作为刷新后的首个 DOM-marker 命令；否则可能触发 markerAttr 重复声明错误）
+# 3) 上传图片（注意：upload 作为刷新后的首个 DOM-marker 命令；若先执行 state/find/click，这些命令会先注入 markerAttr，再执行 upload 容易触发 “markerAttr already declared”）
 opencli browser deepseek-qa upload 'input[type=file]' /path/to/image.png
 opencli browser deepseek-qa keys Escape
 
