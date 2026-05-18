@@ -33,7 +33,7 @@ opencli deepseek status
 
 ## 快速使用流程
 
-会话名建议固定为 `deepseek-qa`（与 `SKILL.md` 约定一致），避免把 `bind/upload/state/type/click/read` 分散到不同 session，导致命令打到错误页面或拿到错误 ref。
+会话名建议固定为 `deepseek-qa`（与 `SKILL.md` 约定一致），避免把 `bind/upload/state/type/click/read` 分散到不同 session，导致命令打到错误页面或获取错误 ref。
 
 1. 新建会话并绑定 `deepseek-qa`
 2. 刷新页面并切到识图模式
@@ -57,7 +57,7 @@ opencli browser deepseek-qa eval "document.querySelectorAll('[role=radio]')[2].c
 opencli browser deepseek-qa upload 'input[type=file]' /path/to/image.png
 opencli browser deepseek-qa keys Escape
 
-# 4) 查看 state 拿到 textarea 和发送按钮 ref
+# 4) 查看 state 获取 textarea 和发送按钮 ref
 opencli browser deepseek-qa state
 
 # 5) 输入并发送
