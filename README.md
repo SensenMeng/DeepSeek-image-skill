@@ -84,3 +84,9 @@ opencli deepseek read -f plain
 ## 参考
 
 - 详细规则与完整操作请查看仓库内文档：[`SKILL.md`](./SKILL.md)
+
+## 致谢
+本项目依赖了 [OpenCLI](https://github.com/jackwener/OpenCLI)，该项目基于 Apache License 2.0 协议开源。
+
+Copyright 2025 jackwener
+Licensed under the Apache License, Version 2.0
