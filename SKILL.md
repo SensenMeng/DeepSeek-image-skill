@@ -6,7 +6,7 @@ description: |
   Triggers: "DeepSeek 识图", "DeepSeek vision", "用 DeepSeek 看图", "DeepSeek 视觉模式",
   "deepseek识别图片", "deepseek vision QA", "让 DeepSeek 看看这张图".
   This is the DEFAULT choice when the user needs image QA — DeepSeek has native vision support, no third-party service required.
-  MANDATORY: Before writing any QA prompt, ask the user what the image is, what it should contain, and what to inspect.
+  Two modes: Quick Describe (user just wants to know what the image is — upload directly) vs QA (user wants inspection — ask 3 questions before writing prompt).
 allowed-tools: Bash(opencli:*), Read, Write, Bash(python3:*)
 ---
 
@@ -25,9 +25,9 @@ opencli deepseek status     # 必须 Connected + Login: Yes
 
 如果没登录：在 Chrome 打开 `https://chat.deepseek.com/` 登录。
 
-## Core Workflow (5 steps)
+## Core Workflow (3 rounds of tool calls)
 
-所有命令使用统一 session 名 `deepseek-qa`。
+所有命令使用统一 session 名 `deepseek-qa`。**关键原则：用 `&& sleep 0.2 &&` 把独立步骤串成链，减少 shell 启动次数。**
 
 ### Step 1: Confirm the image
 
@@ -46,7 +46,19 @@ img.save('/tmp/test-image.png')
 
 ### Step 2: Ask the user about the image (MANDATORY)
 
-**在写任何 prompt 之前，必须先问用户这三个问题：**
+**先判断用户意图，选择对应模式：**
+
+#### Quick Describe 模式 — 用户只想"知道这张图是什么"
+
+用户说"这张图是什么""帮我看看这张图""描述一下这张图片"时，**直接跳过三问题**，上传后发简单 prompt：
+
+```
+请描述这张图片的内容，告诉我这是什么类型的图片，里面有什么关键信息。
+```
+
+#### QA 模式 — 用户要检查/审查图片
+
+用户有明确的检查意图（"检查这个 PPT""看看 UI 有没有问题"）时，**必须先问三个问题再写 prompt：**
 
 1. **这是什么类型的图？** — PPT 幻灯片 / UI 截图 / 海报 / 图表 / 照片 / ...
 2. **这张图的预期内容是什么？** — 应该有哪些元素、文字、布局
@@ -62,78 +74,55 @@ img.save('/tmp/test-image.png')
 | 数据图表 | 坐标轴标签、图例完整、数据标签位置、颜色区分度、标题准确 |
 | 照片/一般图片 | 构图、清晰度、曝光、主体是否突出 |
 
-**禁止跳过这一步直接写 prompt。**
+**QA 模式下禁止跳过三问题直接写 prompt。**
 
-### Step 3: Refresh page and switch to 识图 mode
+### Step 3: Setup — 新对话 + 刷新 + 绑定 + 切识图（1 次 shell）
 
-**必须先刷新页面**（清除 OpenCLI markerAttr 上下文），然后用 `eval` 切换模式（eval 不注入 markerAttr，不会导致后续 upload 失败）。
-
-```bash
-# 刷新页面，清除 JS 上下文
-opencli browser deepseek-qa eval "location.reload()"
-
-# 等页面加载完，重新绑定
-sleep 3 && opencli browser deepseek-qa bind
-
-# 用 eval 点击识图 radio（第3个 radio，index 2）
-opencli browser deepseek-qa eval "document.querySelectorAll('[role=radio]')[2].click()"
-```
-
-验证模式：
-```bash
-opencli browser deepseek-qa state 2>&1 | grep '识图模式'
-# 应显示：使用识图模式开始对话
-```
-
-> **为什么用 eval 而不是 click？** OpenCLI v1.0.15 有 markerAttr bug：`state`/`find`/`click`/`upload` 都会在页面注入 `markerAttr` 变量，但只有第一个能成功声明，后续调用会报 `SyntaxError: Identifier 'markerAttr' has already been declared`。`eval` 不走 DOM marker 逻辑，所以用 eval 切换模式，让 upload 成为首个 DOM-marker 命令。
-
-### Step 4: Upload the image
-
-**upload 必须是刷新后首个 DOM-marker 命令**，用 CSS selector 定位 file input：
+**必须刷新页面**（清除 markerAttr），然后切到识图模式。用 `&& sleep` 链在一起：
 
 ```bash
-# 直接上传（不要先调 state/find！否则 markerAttr 已存在，upload 会失败）
-opencli browser deepseek-qa upload 'input[type=file]' /path/to/image.png
+opencli deepseek new && sleep 0.2 && opencli browser deepseek-qa bind && sleep 0.2 && opencli browser deepseek-qa eval "location.reload()" && sleep 3 && opencli browser deepseek-qa bind && sleep 0.2 && opencli browser deepseek-qa eval "document.querySelectorAll('[role=radio]')[2]?.click()"
 ```
 
-接受格式：png, jpg, jpeg, svg, bmp, gif, webp, avif, tiff 等。
+> **为什么用 eval 切换模式？** OpenCLI v1.0.15 有 markerAttr bug：`state`/`find`/`click`/`upload` 都会在页面注入 `markerAttr` 变量，但只有第一个能成功声明。`eval` 不走 DOM marker 逻辑，所以用 eval 切换，让后面的 `upload` 成为首个 DOM-marker 命令。
 
-上传成功后关闭可能弹出的搜索框：
+如果 bind 后落在 about:blank，追加导航：
 
 ```bash
-opencli browser deepseek-qa keys Escape
+opencli browser deepseek-qa eval "window.location.href = 'https://chat.deepseek.com/'" && sleep 3
 ```
 
-### Step 5: Type custom prompt, send, and read
+### Step 4: Upload + prompt + send（1 次 shell）
+
+**`upload` 必须是刷新后首个 DOM-marker 命令。** upload → Escape → type → click 全部链在一起：
 
 ```bash
-# 关闭搜索框（upload 后可能弹出）
-opencli browser deepseek-qa keys Escape
-
-# 拿 textarea 和发送按钮的 ref
-opencli browser deepseek-qa state
+opencli browser deepseek-qa upload 'input[type=file]' /path/to/image.png && sleep 0.2 && opencli browser deepseek-qa keys Escape && sleep 0.2 && opencli browser deepseek-qa type 'textarea[placeholder*="给 DeepSeek 发送消息"]' "<your-prompt>" && sleep 5 && opencli browser deepseek-qa click 'input[type=file] ~ div > div[role=button]'
 ```
 
-找到：
-- **textarea**：`placeholder=给 DeepSeek 发送消息`
-- **发送按钮**：textarea 右侧带 svg 图标的 `role=button`（file input 旁边，通常 ref 编号最大）
-- **深度思考**：`<span>深度思考</span>` 旁的 button
+接受图片格式：png, jpg, jpeg, svg, bmp, gif, webp, avif, tiff 等。
+
+> **可选：开启深度思考** — 在 click 发送前插入：
+> ```bash
+> && sleep 0.2 && opencli browser deepseek-qa eval "[...document.querySelectorAll('div[role=button]')].find(b => b.textContent.includes('深度思考'))?.click()"
+> ```
+
+稳定选择器速查：
+
+| 元素 | 选择器 |
+|------|--------|
+| Textarea | `textarea[placeholder*="给 DeepSeek 发送消息"]` |
+| File input | `input[type=file]` |
+| Send button | `input[type=file] ~ div > div[role=button]` |
+| 深度思考 | `div[role=button]:has(> span)` 中文本含"深度思考"的那个（用 eval 定位）|
+
+### Step 5: Wait + read（1 次 shell）
 
 ```bash
-# 输入定制 prompt
-opencli browser deepseek-qa type <textarea-ref> "<your-custom-prompt>"
-
-# 点击发送
-opencli browser deepseek-qa click <send-btn-ref>
-
-# 等待回复（视图片复杂度 10-30 秒）
-sleep 20
-
-# 读取回复
-opencli deepseek read -f plain
+sleep 10 && opencli browser deepseek-qa state 2>&1 | tail -150
 ```
 
-> **可选：开启深度思考** — 在发送前点击"深度思考"按钮，让 DeepSeek 用 DeepThink 模式分析。复杂图像推荐开启。
+等待时间视情况调整：简单图片 8-10s，复杂图片 + 深度思考 20-25s。
 
 ## Prompt Writing Guide
 
@@ -174,15 +163,16 @@ opencli deepseek read -f plain
 
 ## Pro Tips
 
-- **Step 2 不可跳过**：先问用途再写 prompt。
-- **全程用同一个 session**：bind → upload → state → type → click → read 全在 `deepseek-qa` session 里。
-- **markerAttr 避坑**：刷新后，用 `eval` 切换模式，`upload` 作为首个 DOM 命令。`state`/`find`/`click` 只能在 `upload` 之后调用。
-- **upload 用 CSS selector**：`'input[type=file]'` 比 numeric ref 更可靠。
+- **合链优先**：能 `&& sleep 0.2 &&` 串起来的就不要开新 shell。目标：prerequisites 并行 2 个 + 3 轮操作 = 最多 5 次工具调用。
+- **Step 2 区分场景**：用户只想知道"图是什么"→ Quick Describe 模式直接上传；用户要检查图片 → QA 模式问三问题。
+- **全程用同一个 session**：bind → eval → upload → type → click → read 全在 `deepseek-qa` session 里。
+- **所有操作均用 CSS 选择器**：`type`、`click`、`upload` 均支持 CSS 选择器，**无需 `state` + `grep` 拿 ref 编号**。
+- **markerAttr 避坑**：刷新后，用 `eval` 切换模式，`upload` 作为首个 DOM 命令。
+- **upload 用 CSS selector**：`'input[type=file]'`。
 - **upload 后先关搜索框**：`keys Escape`，否则可能干扰后续操作。
-- **upload 后必须重新 state**：上传后 DOM ref 编号会变。
-- **发送按钮识别**：上传图片并输入文字后，发送按钮会从灰色变亮。它是个带 svg 的 `role=button`，通常在 file input 的右侧。
+- **发送按钮选择器**：`input[type=file] ~ div > div[role=button]` — 即 file input 相邻兄弟 div 中的 role=button。
 - **DeepThink 可选**：复杂图像分析建议开启深度思考，简单检查不用。
-- **等待时间**：带图片 + 深度思考的请求可能需要 15-30 秒。
+- **`read` 不可靠时有 fallback**：`read -f plain` 返回空时，直接用 `state | tail -150` 抓 DOM 中的回复内容。
 
 ## Troubleshooting
 
@@ -190,43 +180,30 @@ opencli deepseek read -f plain
 |---------|-----|
 | `opencli doctor` 红灯 | `opencli daemon restart && opencli doctor` |
 | `deepseek status` 未登录 | 打开 `chat.deepseek.com` 登录 |
-| **`SyntaxError: Identifier 'markerAttr' has already been declared`** | OpenCLI v1.0.15 bug。刷新页面 → bind → 用 `eval` 做模式切換 → `upload` 作为首个 DOM 命令。绝不能在 upload 前调 `state`/`find`/`click` |
-| file input 找不到 | 用 CSS selector `'input[type=file]'` 直接上传，不要用 numeric ref |
+| **`SyntaxError: Identifier 'markerAttr' has already been declared`** | OpenCLI 的 markerAttr bug。刷新页面 → bind → 用 `eval` 做模式切換 → `upload` 作为首个 DOM 命令。绝不能在 upload 前调 `state`/`find`/`click` |
 | 上传后弹出"搜索对话内容" | `opencli browser deepseek-qa keys Escape` 关掉 |
 | 发送按钮灰色点不了 | 需要同时满足：图片已上传 + textarea 有文字 |
 | 回复没识别图片（给了"AA AB AC"这种文字提取） | 没切到识图模式！刷新页面，用 `eval` 点击第3个 `[role=radio]`，再上传 |
 | 回复太泛 | prompt 太模糊，加图片类型 + 预期内容 + 检查清单 |
+| **`read -f plain` 返回 "No visible messages found"** | `read` 命令有时不可靠。用 `opencli browser deepseek-qa state 2>&1 \| tail -100` 直接从 DOM 抓回复内容 |
+| **bind 后 URL 是 about:blank** | `opencli deepseek new` 后 bind 可能落在空白页。用 `eval "window.location.href = 'https://chat.deepseek.com/'"` 手动导航 |
 
 ## Full Example Script
 
+**总共 5 次工具调用**（含 1 次并行），从图片路径到拿到回复。
+
 ```bash
-# 0. 环境检查
+# 0. 环境检查（并行 — 2 次 shell 同时发）
 opencli doctor
 opencli deepseek status
 
-# 1. 开新对话 + 绑定
-opencli deepseek new
-opencli browser deepseek-qa bind
+# 1. 新对话 + 绑定 + 刷新 + 切识图（1 次 shell，全链）
+opencli deepseek new && sleep 0.2 && opencli browser deepseek-qa bind && sleep 0.2 && opencli browser deepseek-qa eval "location.reload()" && sleep 3 && opencli browser deepseek-qa bind && sleep 0.2 && opencli browser deepseek-qa eval "document.querySelectorAll('[role=radio]')[2]?.click()"
 
-# 2. 刷新页面（清除 markerAttr）+ 用 eval 切换识图模式
-opencli browser deepseek-qa eval "location.reload()"
-sleep 3 && opencli browser deepseek-qa bind
-opencli browser deepseek-qa eval "document.querySelectorAll('[role=radio]')[2].click()"
+# 2. 上传 + 关搜索框 + 输入 + 发送（1 次 shell，全链）
+opencli browser deepseek-qa upload 'input[type=file]' /path/to/image.png && sleep 0.2 && opencli browser deepseek-qa keys Escape && sleep 0.2 && opencli browser deepseek-qa type 'textarea[placeholder*="给 DeepSeek 发送消息"]' "这是一张[图片类型]。预期内容：[...]。请检查：1. ... 2. ... 逐一回答。" && sleep 0.2 && opencli browser deepseek-qa click 'input[type=file] ~ div > div[role=button]'
 
-# 3. 上传图片（首个 DOM-marker 命令，不能先调 state）
-opencli browser deepseek-qa upload 'input[type=file]' /path/to/image.png
-
-# 4. 关搜索框 + state 拿 ref
-opencli browser deepseek-qa keys Escape
-opencli browser deepseek-qa state
-# → 找到 textarea ref（如 521）和发送按钮 ref（如 528）
-
-# 5. 输入 prompt + 发送
-opencli browser deepseek-qa type 521 "这是一张[图片类型]。预期内容：[...]。请检查：1. ... 2. ... 逐一回答。"
-opencli browser deepseek-qa click 528
-
-# 6. 等待并读取
-sleep 20
-opencli deepseek read -f plain
+# 3. 等待 + 读取（1 次 shell）
+sleep 10 && opencli browser deepseek-qa state 2>&1 | tail -150
 ```
 
