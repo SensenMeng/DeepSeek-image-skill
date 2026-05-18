@@ -33,6 +33,8 @@ opencli deepseek status
 
 ## 快速使用流程
 
+会话名建议固定为 `deepseek-qa`（与 `SKILL.md` 约定一致）。
+
 1. 新建会话并绑定 `deepseek-qa`
 2. 刷新页面并切到识图模式
 3. 上传图片（建议用 `input[type=file]`）
@@ -81,4 +83,4 @@ opencli deepseek read -f plain
 
 ## 参考
 
-- 详细规则与完整操作请查看：[`SKILL.md`](./SKILL.md)
+- 详细规则与完整操作请查看仓库内文档：[`SKILL.md`](./SKILL.md)
